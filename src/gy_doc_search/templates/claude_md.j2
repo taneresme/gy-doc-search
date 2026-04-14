@@ -1,0 +1,26 @@
+# Project Documentation Search
+
+This project uses `gy-doc-search` to index documentation for AI-assisted development.
+
+## How to Use
+
+- `search_docs(query)` searches across project documentation.
+- `get_full_doc(file_path)` reads a relevant file in full.
+- `list_doc_sources(prefix)` shows indexed documentation files.
+- `doc_index_stats()` reports index coverage and freshness.
+
+## Rules
+
+1. Search for relevant specs before implementing features.
+2. Read the full source document when a search result looks relevant.
+3. Prefer specific queries and use path filters when you know the area.
+
+## Documentation Sources
+
+{% for source in sources -%}
+- {{ source.path }}
+{% endfor %}
+
+## Reindexing
+
+Run `gy-doc-search index --incremental` when documentation changes.

@@ -1,0 +1,14 @@
+cases:
+  - id: payments-auth
+    query: "authorization funds"
+    relevant_files:
+      - "docs/payments.md"
+    relevant_headings:
+      - "Payments"
+
+  - id: settlement-close
+    query: "day closing settlement"
+    relevant_files:
+      - "docs/settlement.md"
+    relevant_headings:
+      - "Settlement"

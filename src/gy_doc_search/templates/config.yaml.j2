@@ -1,0 +1,67 @@
+# .doc-search/config.yaml
+# Only override what you need. Everything else uses built-in defaults.
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+# Each entry defines a directory (or file) to index.
+# Multiple entries are allowed — each can use a different chunking profile.
+sources:
+{% for source in sources %}
+  - path: "{{ source.path }}"        # Path to docs folder, relative to project root
+    recursive: true                  # Also index files in subdirectories
+    filter: "*.md"                   # Glob pattern — only index matching files
+    profile: "default"               # Chunking profile to use (defined below)
+    # metadata_defaults:             # Optional: key-value pairs added to every chunk's metadata
+    #   version: "1.0"
+{% endfor %}
+
+# ── Chunking ──────────────────────────────────────────────────────────────────
+# Controls how documents are split into searchable chunks.
+# Define multiple named profiles to use different strategies per source.
+chunking:
+  default_profile: "default"         # Profile used when a source doesn't specify one
+  profiles:
+    default:
+      min_chunk_tokens: 60           # Sections shorter than this are merged into the previous chunk
+      max_chunk_tokens: 240          # Sections longer than this are split at paragraph boundaries
+      target_chunk_tokens: 160       # Ideal chunk size — accumulate paragraphs until this is reached
+      overlap_tokens: 30             # Words repeated from the end of the previous chunk to preserve context across splits
+      heading_levels: [1, 2, 3, 4]  # Markdown heading levels that act as chunk boundaries (# ## ### ####)
+
+# ── Retrieval ─────────────────────────────────────────────────────────────────
+retrieval:
+  default_top_k: 10                  # Number of results returned per query (can be overridden per call)
+  # max_top_k: 20                    # Hard ceiling — callers cannot request more results than this
+  similarity_threshold: 0.1          # Minimum score for a chunk to appear in results (0.0–1.0)
+  hybrid_search: true                # Combine vector search with BM25 keyword search via Reciprocal Rank Fusion
+  reranking: false                   # Re-score top results with a cross-encoder for higher precision (slower)
+  # rerank_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder model used when reranking: true
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+storage:
+  backend: "local"                   # "local" = JSON file on disk; "chroma" = ChromaDB with HNSW index
+  # index_dirname: ".index"          # Subdirectory inside .doc-search/ where the index is stored
+  # documents_file: "documents.json" # Filename for the local JSON vector store
+
+# ── Chroma (only used when storage.backend is "chroma") ───────────────────────
+# chroma:
+#   collection_name: "project_docs"  # Name of the ChromaDB collection
+
+# ── Embedding ─────────────────────────────────────────────────────────────────
+# Controls how text is converted to vectors for similarity search.
+embedding:
+  provider: "simple"                 # "simple" = fast lexical hash (no dependencies); "sentence-transformers" | "openai" | "ollama"
+  # --- sentence-transformers options ---
+  # model_name: "nomic-ai/nomic-embed-text-v1.5"   # HuggingFace model; downloaded on first use
+  # batch_size: 32                   # Chunks embedded per forward pass — lower if you hit OOM
+  # normalize_embeddings: true       # L2-normalize vectors (required for cosine similarity)
+  # query_prefix: null               # Prefix prepended to queries (auto-set for nomic models)
+  # document_prefix: null            # Prefix prepended to indexed chunks (auto-set for nomic models)
+  # --- openai options ---
+  # openai_model: "text-embedding-3-small"          # OpenAI embedding model; requires OPENAI_API_KEY
+  # --- ollama options ---
+  # ollama_model: "nomic-embed-text" # Model name as registered in Ollama
+  # ollama_base_url: "http://localhost:11434"        # URL of the running Ollama server
+
+# ── Performance ───────────────────────────────────────────────────────────────
+# performance:
+#   workers: 0                       # Parallel workers for indexing: 0 = auto (os.cpu_count()), 1 = serial
