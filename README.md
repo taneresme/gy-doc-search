@@ -18,7 +18,7 @@ Markdown is the primary target because headings, sections, and front matter are 
 ## Quickstart
 
 ```bash
-pip install -e .
+pip install gy-doc-search
 gy-doc-search init --sources ./docs
 gy-doc-search index
 gy-doc-search query "how authentication works"

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-  { name = "OpenAI Codex" },
+  { name = "Taner Esme, Claude Code, and Codex" },
 ]
 dependencies = [
   "click>=8.0",
