@@ -11,7 +11,7 @@ from gy_doc_search.eval import evaluate_cases, load_eval_cases
 
 
 def _write_project(tmp_path: Path) -> Path:
-    (tmp_path / ".doc-search").mkdir()
+    (tmp_path / ".gy-doc-search").mkdir()
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "payments.md").write_text(
         "# Payments\n\nAuthorization requests validate funds before capture.",
@@ -21,7 +21,7 @@ def _write_project(tmp_path: Path) -> Path:
         "# Settlement\n\nBatch settlement closes the day and posts cleared records.",
         encoding="utf-8",
     )
-    (tmp_path / ".doc-search" / "config.yaml").write_text(
+    (tmp_path / ".gy-doc-search" / "config.yaml").write_text(
         yaml.safe_dump(
             {
                 "sources": [{"path": "./docs"}],

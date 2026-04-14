@@ -1,4 +1,4 @@
-# .doc-search/config.yaml
+# .gy-doc-search/config.yaml
 # Only override what you need. Everything else uses built-in defaults.
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ retrieval:
 # ── Storage ───────────────────────────────────────────────────────────────────
 storage:
   backend: "local"                   # "local" = JSON file on disk; "chroma" = ChromaDB with HNSW index
-  # index_dirname: ".index"          # Subdirectory inside .doc-search/ where the index is stored
+  # index_dirname: ".index"          # Subdirectory inside .gy-doc-search/ where the index is stored
   # documents_file: "documents.json" # Filename for the local JSON vector store
 
 # ── Chroma (only used when storage.backend is "chroma") ───────────────────────

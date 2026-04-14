@@ -25,7 +25,7 @@ def test_user_config_merge(tmp_path: Path) -> None:
 
 
 def test_project_config_merge(tmp_project: Path) -> None:
-    (tmp_project / ".doc-search" / "config.yaml").write_text(
+    (tmp_project / ".gy-doc-search" / "config.yaml").write_text(
         yaml.safe_dump({"sources": [{"path": "./docs"}], "retrieval": {"default_top_k": 3}}),
         encoding="utf-8",
     )
@@ -37,7 +37,7 @@ def test_project_config_merge(tmp_project: Path) -> None:
 def test_project_root_discovery(tmp_project: Path) -> None:
     nested = tmp_project / "docs" / "nested"
     nested.mkdir()
-    (tmp_project / ".doc-search" / "config.yaml").write_text(
+    (tmp_project / ".gy-doc-search" / "config.yaml").write_text(
         yaml.safe_dump({"sources": [{"path": "./docs"}]}),
         encoding="utf-8",
     )
@@ -50,7 +50,7 @@ def test_missing_project_error(tmp_path: Path) -> None:
 
 
 def test_invalid_source_path_raises(tmp_project: Path) -> None:
-    (tmp_project / ".doc-search" / "config.yaml").write_text(
+    (tmp_project / ".gy-doc-search" / "config.yaml").write_text(
         yaml.safe_dump({"sources": [{"path": "./missing"}]}),
         encoding="utf-8",
     )
@@ -61,7 +61,7 @@ def test_invalid_source_path_raises(tmp_project: Path) -> None:
 def test_profile_resolution(tmp_project: Path) -> None:
     config_data = load_defaults()
     config_data["sources"] = [{"path": "./docs", "profile": "default"}]
-    (tmp_project / ".doc-search" / "config.yaml").write_text(
+    (tmp_project / ".gy-doc-search" / "config.yaml").write_text(
         yaml.safe_dump(config_data),
         encoding="utf-8",
     )

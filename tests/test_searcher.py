@@ -14,7 +14,7 @@ def _write_project_config(project_root: Path) -> None:
         "sources": [{"path": "./docs"}],
         "embedding": {"provider": "simple"},
     }
-    (project_root / ".doc-search" / "config.yaml").write_text(
+    (project_root / ".gy-doc-search" / "config.yaml").write_text(
         yaml.safe_dump(config),
         encoding="utf-8",
     )

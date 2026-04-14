@@ -112,7 +112,7 @@ sources:
 
 ```bash
 # Initialize in a new project
-gy-doc-search init                         # Creates .doc-search/ with default config
+gy-doc-search init                         # Creates .gy-doc-search/ with default config
 gy-doc-search init --sources ./docs ./specs  # Pre-fill source paths
 
 # Indexing
@@ -149,10 +149,10 @@ gy-doc-search eval --cases eval_cases.yaml --skip-index
 
 ## Notes
 
-- Project configuration lives in `.doc-search/config.yaml`.
+- Project configuration lives in `.gy-doc-search/config.yaml`.
 - `gy-doc-search` auto-selects a storage backend:
-  - `chromadb` installed: persistent Chroma collection in `.doc-search/.chroma/`
-  - no `chromadb`: local JSON-backed store in `.doc-search/.index/`
+  - `chromadb` installed: persistent Chroma collection in `.gy-doc-search/.chroma/`
+  - no `chromadb`: local JSON-backed store in `.gy-doc-search/.index/`
 - If `sentence-transformers` is installed, semantic embeddings use the configured transformer model. Without it, `gy-doc-search` falls back to a built-in lexical hash embedder.
 - If `mcp` is installed, `gy-doc-search serve` starts the MCP server for Claude Code or other MCP clients.
 - `gy-doc-search index` now prints explicit phases during indexing, including config loading, file scanning, chunking, embedding, and index writes.
