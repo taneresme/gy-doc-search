@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 import click
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, PackageLoader
 
 from gy_doc_search import __version__
 from gy_doc_search.config import ConfigError, load_config
@@ -17,8 +17,10 @@ from gy_doc_search.searcher import format_results, get_file_content, list_source
 
 
 def _template_env() -> Environment:
-    template_dir = Path(__file__).parent / "templates"
-    return Environment(loader=FileSystemLoader(str(template_dir)), autoescape=False)
+    return Environment(
+        loader=PackageLoader("gy_doc_search", "templates"),
+        autoescape=False,
+    )
 
 
 def render_template(name: str, **context: object) -> str:

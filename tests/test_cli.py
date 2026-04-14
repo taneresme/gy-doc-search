@@ -15,6 +15,8 @@ def test_init_creates_project_files(tmp_path: Path) -> None:
         result = runner.invoke(main, ["init"], catch_exceptions=False)
         assert result.exit_code == 0
         assert Path(".doc-search/config.yaml").exists()
+        config = Path(".doc-search/config.yaml").read_text(encoding="utf-8")
+        assert "./docs" in config
 
 
 def test_init_with_claude_code(tmp_path: Path) -> None:
