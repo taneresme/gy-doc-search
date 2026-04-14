@@ -23,7 +23,7 @@ def default_profile() -> dict:
 
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Path:
-    ds_dir = tmp_path / ".doc-search"
+    ds_dir = tmp_path / ".gy-doc-search"
     ds_dir.mkdir()
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir()

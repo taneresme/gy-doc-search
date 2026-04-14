@@ -7,18 +7,20 @@ import shutil
 from pathlib import Path
 
 import click
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, PackageLoader
 
 from gy_doc_search import __version__
-from gy_doc_search.config import ConfigError, load_config
+from gy_doc_search.config import ConfigError, PROJECT_DIRNAME, load_config
 from gy_doc_search.eval import evaluate_cases, format_eval_report, report_to_json
 from gy_doc_search.indexer import clean_index, get_stats, inspect_index_changes, run_index, verify_index
 from gy_doc_search.searcher import format_results, get_file_content, list_sources, results_to_json, search
 
 
 def _template_env() -> Environment:
-    template_dir = Path(__file__).parent / "templates"
-    return Environment(loader=FileSystemLoader(str(template_dir)), autoescape=False)
+    return Environment(
+        loader=PackageLoader("gy_doc_search", "templates"),
+        autoescape=False,
+    )
 
 
 def render_template(name: str, **context: object) -> str:
@@ -57,15 +59,15 @@ def main() -> None:
 def init(sources: tuple[str, ...], with_claude_code: bool) -> None:
     """Initialize gy-doc-search in the current project."""
     project_root = Path.cwd()
-    doc_search_dir = project_root / ".doc-search"
+    doc_search_dir = project_root / PROJECT_DIRNAME
     doc_search_dir.mkdir(exist_ok=True)
 
     source_entries = [{"path": path} for path in (sources or ("./docs",))]
     config_text = render_template("config.yaml.j2", sources=source_entries)
     _write_text(doc_search_dir / "config.yaml", config_text)
     _write_text(doc_search_dir / ".gitignore", render_template("gitignore.j2"))
-    click.echo("Created .doc-search/config.yaml")
-    click.echo("Created .doc-search/.gitignore")
+    click.echo(f"Created {PROJECT_DIRNAME}/config.yaml")
+    click.echo(f"Created {PROJECT_DIRNAME}/.gitignore")
 
     if with_claude_code:
         setup_claude_code(project_root)

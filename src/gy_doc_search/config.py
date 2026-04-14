@@ -14,6 +14,10 @@ class ConfigError(RuntimeError):
     """Raised when configuration is missing or invalid."""
 
 
+PROJECT_DIRNAME = ".gy-doc-search"
+LEGACY_PROJECT_DIRNAME = ".doc-search"
+
+
 def deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge override into base."""
     for key, value in override.items():
@@ -40,16 +44,31 @@ def load_defaults() -> dict:
     return copy.deepcopy(DEFAULTS)
 
 
+def _project_config_path(root: Path) -> Path | None:
+    for dirname in (PROJECT_DIRNAME, LEGACY_PROJECT_DIRNAME):
+        candidate = root / dirname / "config.yaml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _project_dir(root: Path) -> Path:
+    config_path = _project_config_path(root)
+    if config_path is not None:
+        return config_path.parent
+    return root / PROJECT_DIRNAME
+
+
 def find_project_root(start: Path | None = None) -> Path | None:
-    """Walk up from the given path looking for .doc-search/config.yaml."""
+    """Walk up from the given path looking for a project config file."""
     current = (start or Path.cwd()).resolve()
     if current.is_file():
         current = current.parent
     while current != current.parent:
-        if (current / ".doc-search" / "config.yaml").exists():
+        if _project_config_path(current) is not None:
             return current
         current = current.parent
-    if (current / ".doc-search" / "config.yaml").exists():
+    if _project_config_path(current) is not None:
         return current
     return None
 
@@ -60,7 +79,7 @@ def _user_config_path() -> Path:
 
 def _storage_dir(project_root: Path, config: dict) -> Path:
     dirname = config.get("storage", {}).get("index_dirname", ".index")
-    return project_root / ".doc-search" / dirname
+    return _project_dir(project_root) / dirname
 
 
 def load_config(
@@ -77,21 +96,18 @@ def load_config(
 
     project_root = find_project_root(cwd)
     if project_root is not None:
-        project_config_path = project_root / ".doc-search" / "config.yaml"
+        project_dir = _project_dir(project_root)
+        project_config_path = project_dir / "config.yaml"
         deep_merge(config, load_yaml(project_config_path))
         config["_project_root"] = str(project_root)
-        config["_doc_search_dir"] = str(project_root / ".doc-search")
+        config["_doc_search_dir"] = str(project_dir)
         config["_storage_dir"] = str(_storage_dir(project_root, config))
-        config["_chroma_dir"] = str(project_root / ".doc-search" / ".chroma")
-        config["_index_state_path"] = str(
-            project_root
-            / ".doc-search"
-            / config["storage"]["state_file"]
-        )
+        config["_chroma_dir"] = str(project_dir / ".chroma")
+        config["_index_state_path"] = str(project_dir / config["storage"]["state_file"])
     elif require_project:
         raise ConfigError(
             "No gy-doc-search project found. Run from within a directory that contains "
-            ".doc-search/config.yaml, or initialize one with `gy-doc-search init`."
+            ".gy-doc-search/config.yaml, or initialize one with `gy-doc-search init`."
         )
 
     validate_config(config)
