@@ -279,6 +279,11 @@ class ChromaVectorStore(VectorStore):
     """Thin wrapper over ChromaDB with a compatible API."""
 
     backend_name = "chroma"
+    _GET_PAGE_SIZE = 1000
+
+    @staticmethod
+    def _batched_ids(ids: list[str], batch_size: int) -> list[list[str]]:
+        return [ids[start : start + batch_size] for start in range(0, len(ids), batch_size)]
 
     def __init__(self, chroma_dir: str, collection_name: str):
         import chromadb
@@ -336,32 +341,53 @@ class ChromaVectorStore(VectorStore):
     ) -> list[dict]:
         include = include or ["documents", "metadatas"]
         exact_where, prefix = _split_where_filter(where)
-        raw = self.collection.get(
-            ids=ids,
-            where=exact_where,
-            include=include,
-        )
-        documents = raw.get("documents") or [None] * len(raw.get("ids", []))
-        metadatas = raw.get("metadatas") or [None] * len(raw.get("ids", []))
-        embeddings = raw.get("embeddings") or [None] * len(raw.get("ids", []))
         records = []
-        for chunk_id, document, metadata, embedding in zip(
-            raw.get("ids", []),
-            documents,
-            metadatas,
-            embeddings,
-        ):
-            metadata = metadata or {}
-            if not _match_metadata(metadata, exact_where, prefix):
-                continue
-            records.append(
-                {
-                    "id": chunk_id,
-                    "document": document,
-                    "metadata": metadata,
-                    "embedding": embedding,
-                }
-            )
+        if ids is not None:
+            raw_batches = [
+                self.collection.get(
+                    ids=id_batch,
+                    where=exact_where,
+                    include=include,
+                )
+                for id_batch in self._batched_ids(ids, self._GET_PAGE_SIZE)
+            ]
+        else:
+            raw_batches = []
+            offset = 0
+            while True:
+                raw = self.collection.get(
+                    where=exact_where,
+                    limit=self._GET_PAGE_SIZE,
+                    offset=offset,
+                    include=include,
+                )
+                raw_batches.append(raw)
+                batch_size = len(raw.get("ids", []))
+                if batch_size < self._GET_PAGE_SIZE:
+                    break
+                offset += batch_size
+
+        for raw in raw_batches:
+            documents = raw.get("documents") or [None] * len(raw.get("ids", []))
+            metadatas = raw.get("metadatas") or [None] * len(raw.get("ids", []))
+            embeddings = raw.get("embeddings") or [None] * len(raw.get("ids", []))
+            for chunk_id, document, metadata, embedding in zip(
+                raw.get("ids", []),
+                documents,
+                metadatas,
+                embeddings,
+            ):
+                metadata = metadata or {}
+                if not _match_metadata(metadata, exact_where, prefix):
+                    continue
+                records.append(
+                    {
+                        "id": chunk_id,
+                        "document": document,
+                        "metadata": metadata,
+                        "embedding": embedding,
+                    }
+                )
         return records
 
     def get(
