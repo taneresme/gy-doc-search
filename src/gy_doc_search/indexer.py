@@ -132,35 +132,36 @@ def _chunk_args_from_manifests(config: dict, manifests: dict[str, dict]) -> list
 def _iter_chunk_results(args_list: list[tuple], workers: int | None) -> Iterable[tuple]:
     if not args_list:
         return
-    submitted = False
+    yielded_indices: set[int] = set()
     try:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             worker_count = max(1, workers or (os.cpu_count() or 1))
-            args_iter = iter(args_list)
+            args_iter = iter(enumerate(args_list))
             pending: dict = {}
 
             for _ in range(worker_count):
                 try:
-                    args = next(args_iter)
+                    index, args = next(args_iter)
                 except StopIteration:
                     break
-                pending[pool.submit(_chunk_one_file, args)] = args
-                submitted = True
+                pending[pool.submit(_chunk_one_file, args)] = (index, args)
 
             while pending:
                 done, _ = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
-                    pending.pop(future)
-                    yield future.result()
+                    index, _args = pending.pop(future)
+                    result = future.result()
+                    yielded_indices.add(index)
+                    yield result
                     try:
-                        args = next(args_iter)
+                        next_index, args = next(args_iter)
                     except StopIteration:
                         continue
-                    pending[pool.submit(_chunk_one_file, args)] = args
+                    pending[pool.submit(_chunk_one_file, args)] = (next_index, args)
     except Exception:
-        if submitted:
-            raise
-        for args in args_list:
+        for index, args in enumerate(args_list):
+            if index in yielded_indices:
+                continue
             yield _chunk_one_file(args)
 
 
@@ -274,6 +275,60 @@ def _upsert_chunks(config: dict, store, embedder: Embedder, chunks: list, report
         )
         start += len(batch)
         del embeddings
+
+
+def _snapshot_chunk_records(store, chunk_ids: list[str]) -> dict | None:
+    if not chunk_ids:
+        return None
+    records = store.get(
+        ids=chunk_ids,
+        include=["documents", "metadatas", "embeddings"],
+    )
+    return records if records.get("ids") else None
+
+
+def _restore_chunk_records(store, records: dict | None) -> None:
+    if not records or not records.get("ids"):
+        return
+    store.upsert(
+        ids=records["ids"],
+        documents=records.get("documents", []),
+        embeddings=records.get("embeddings", []),
+        metadatas=records.get("metadatas", []),
+    )
+
+
+def _apply_incremental_file_update(
+    config: dict,
+    store,
+    embedder: Embedder,
+    relative_path: str,
+    previous: dict | None,
+    file_state: dict,
+    file_chunks: list,
+    state: dict,
+    reporter=None,
+) -> None:
+    previous_chunk_ids = list(previous.get("chunk_ids", [])) if previous else []
+    previous_records = _snapshot_chunk_records(store, previous_chunk_ids)
+    try:
+        if previous:
+            _emit(reporter, f"re-indexing changed file: {relative_path}")
+            store.delete(previous_chunk_ids)
+        else:
+            _emit(reporter, f"indexing new file: {relative_path}")
+        _emit(reporter, f"generated {len(file_chunks)} chunks for {relative_path}")
+        _upsert_chunks(config, store, embedder, file_chunks, reporter=reporter)
+        state["files"][relative_path] = file_state
+        _save_state(config, state)
+    except Exception:
+        store.delete(file_state.get("chunk_ids", []))
+        if previous:
+            _restore_chunk_records(store, previous_records)
+            state["files"][relative_path] = previous
+        else:
+            state["files"].pop(relative_path, None)
+        raise
 
 
 def inspect_index_changes(config: dict) -> dict:
@@ -392,15 +447,17 @@ def incremental_index(config: dict, reporter=None) -> IndexStats:
 
     with _persist_context(store):
         for relative_path, file_state, file_chunks in _iter_chunk_results(chunk_args, workers):
-            previous = previous_states[relative_path]
-            if previous:
-                _emit(reporter, f"re-indexing changed file: {relative_path}")
-                store.delete(previous.get("chunk_ids", []))
-            else:
-                _emit(reporter, f"indexing new file: {relative_path}")
-            _emit(reporter, f"generated {len(file_chunks)} chunks for {relative_path}")
-            _upsert_chunks(config, store, embedder, file_chunks, reporter=reporter)
-            state["files"][relative_path] = file_state
+            _apply_incremental_file_update(
+                config,
+                store,
+                embedder,
+                relative_path,
+                previous_states[relative_path],
+                file_state,
+                file_chunks,
+                state,
+                reporter=reporter,
+            )
 
     state["last_indexed"] = _utc_now()
     _emit(reporter, "saving index state")
