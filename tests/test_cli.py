@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata as metadata
 import json
 from pathlib import Path
 
@@ -43,6 +44,13 @@ def test_status_outside_project(tmp_path: Path) -> None:
         result = runner.invoke(main, ["status"])
         assert result.exit_code != 0
         assert "No gy-doc-search project found" in result.output
+
+
+def test_version_uses_installed_package_metadata() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert metadata.version("gy-doc-search") in result.output
 
 
 def test_index_dry_run(tmp_path: Path) -> None:
