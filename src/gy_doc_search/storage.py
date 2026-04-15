@@ -281,6 +281,10 @@ class ChromaVectorStore(VectorStore):
     backend_name = "chroma"
     _GET_PAGE_SIZE = 1000
 
+    @staticmethod
+    def _batched_ids(ids: list[str], batch_size: int) -> list[list[str]]:
+        return [ids[start : start + batch_size] for start in range(0, len(ids), batch_size)]
+
     def __init__(self, chroma_dir: str, collection_name: str):
         import chromadb
 
@@ -341,10 +345,11 @@ class ChromaVectorStore(VectorStore):
         if ids is not None:
             raw_batches = [
                 self.collection.get(
-                    ids=ids,
+                    ids=id_batch,
                     where=exact_where,
                     include=include,
                 )
+                for id_batch in self._batched_ids(ids, self._GET_PAGE_SIZE)
             ]
         else:
             raw_batches = []
