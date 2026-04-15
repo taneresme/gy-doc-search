@@ -6,10 +6,12 @@ import contextlib
 import hashlib
 import json
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import sys
+from typing import Iterable
 
 from gy_doc_search.chunker import _iter_source_files, chunk_file
 from gy_doc_search.config import resolve_source_entry
@@ -111,17 +113,73 @@ def _progress():
     return Progress()
 
 
+def _chunk_args_from_manifests(config: dict, manifests: dict[str, dict]) -> list[tuple]:
+    return [
+        (
+            relative_path,
+            manifest["abs_path"],
+            config["_project_root"],
+            manifest["profile_config"],
+            manifest["metadata_defaults"],
+            manifest["profile"],
+            manifest["mtime"],
+            manifest["md5"],
+        )
+        for relative_path, manifest in manifests.items()
+    ]
+
+
+def _iter_chunk_results(args_list: list[tuple], workers: int | None) -> Iterable[tuple]:
+    if not args_list:
+        return
+    submitted = False
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            worker_count = max(1, workers or (os.cpu_count() or 1))
+            args_iter = iter(args_list)
+            pending: dict = {}
+
+            for _ in range(worker_count):
+                try:
+                    args = next(args_iter)
+                except StopIteration:
+                    break
+                pending[pool.submit(_chunk_one_file, args)] = args
+                submitted = True
+
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    pending.pop(future)
+                    yield future.result()
+                    try:
+                        args = next(args_iter)
+                    except StopIteration:
+                        continue
+                    pending[pool.submit(_chunk_one_file, args)] = args
+    except Exception:
+        if submitted:
+            raise
+        for args in args_list:
+            yield _chunk_one_file(args)
+
+
+def _persist_context(store):
+    from gy_doc_search.storage import LocalVectorStore
+
+    return store.deferred_persist() if isinstance(store, LocalVectorStore) else contextlib.nullcontext()
+
+
 def _build_stats(config: dict, store, state: dict) -> IndexStats:
-    docs = store.get(include=["documents", "metadatas"])
-    total_chunks = len(docs["ids"])
+    total_chunks = store.count()
+    docs = store.get(include=["metadatas"])
     metadatas = docs.get("metadatas", [])
-    documents = docs.get("documents", [])
     total_words = sum(int(metadata.get("word_count", 0)) for metadata in metadatas)
     counts = Counter(metadata.get("source_file", "") for metadata in metadatas)
     sources = [{"path": path, "files": 1, "chunks": chunk_count} for path, chunk_count in sorted(counts.items())]
     avg_chunk_words = int(total_words / total_chunks) if total_chunks else 0
     return IndexStats(
-        total_files=len({metadata.get("source_file", "") for metadata in metadatas}),
+        total_files=len(counts),
         total_chunks=total_chunks,
         total_words=total_words,
         avg_chunk_words=avg_chunk_words,
@@ -164,60 +222,58 @@ def _clear_torch_memory() -> None:
 def _upsert_chunks(config: dict, store, embedder: Embedder, chunks: list, reporter=None) -> None:
     if not chunks:
         return
-    from gy_doc_search.storage import LocalVectorStore
     configured_batch_size = int(config["embedding"].get("batch_size", 32))
     batch_size = max(1, configured_batch_size)
     start = 0
     batch_counter = 0
     total_batches = max(1, (len(chunks) + batch_size - 1) // batch_size)
-    ctx = store.deferred_persist() if isinstance(store, LocalVectorStore) else contextlib.nullcontext()
-    with ctx:
-        while start < len(chunks):
-            batch = chunks[start : start + batch_size]
-            try:
-                batch_counter += 1
-                _emit(
-                    reporter,
-                    (
-                        f"embedding chunks {start + 1}-{start + len(batch)} of {len(chunks)} "
-                        f"(batch {batch_counter}/{total_batches}, size={batch_size})"
-                    ),
-                )
-                embedder.set_batch_size(batch_size)
-                embeddings = embedder.embed_documents([chunk.content for chunk in batch])
-            except RuntimeError as exc:
-                if _is_embedding_memory_error(exc) and batch_size > 1:
-                    next_batch_size = max(1, batch_size // 2)
-                    print(
-                        (
-                            f"Embedding batch of size {batch_size} ran out of memory. "
-                            f"Retrying with batch size {next_batch_size}."
-                        ),
-                        file=sys.stderr,
-                    )
-                    _clear_torch_memory()
-                    batch_size = next_batch_size
-                    batch_counter -= 1
-                    total_batches = max(1, (len(chunks) - start + batch_size - 1) // batch_size)
-                    continue
-                if _is_embedding_memory_error(exc):
-                    raise RuntimeError(
-                        "Embedding failed due to insufficient memory even at batch size 1. "
-                        "Lower chunk size, switch embedding provider, or use a smaller model."
-                    ) from exc
-                raise
-
+    while start < len(chunks):
+        batch = chunks[start : start + batch_size]
+        try:
+            batch_counter += 1
             _emit(
                 reporter,
-                f"writing batch {batch_counter} to {store.backend_name} store",
+                (
+                    f"embedding chunks {start + 1}-{start + len(batch)} of {len(chunks)} "
+                    f"(batch {batch_counter}/{total_batches}, size={batch_size})"
+                ),
             )
-            store.upsert(
-                ids=[chunk.chunk_id for chunk in batch],
-                documents=[chunk.content for chunk in batch],
-                embeddings=embeddings,
-                metadatas=[_flatten_metadata(chunk) for chunk in batch],
-            )
-            start += len(batch)
+            embedder.set_batch_size(batch_size)
+            embeddings = embedder.embed_documents([chunk.content for chunk in batch])
+        except RuntimeError as exc:
+            if _is_embedding_memory_error(exc) and batch_size > 1:
+                next_batch_size = max(1, batch_size // 2)
+                print(
+                    (
+                        f"Embedding batch of size {batch_size} ran out of memory. "
+                        f"Retrying with batch size {next_batch_size}."
+                    ),
+                    file=sys.stderr,
+                )
+                _clear_torch_memory()
+                batch_size = next_batch_size
+                batch_counter -= 1
+                total_batches = max(1, (len(chunks) - start + batch_size - 1) // batch_size)
+                continue
+            if _is_embedding_memory_error(exc):
+                raise RuntimeError(
+                    "Embedding failed due to insufficient memory even at batch size 1. "
+                    "Lower chunk size, switch embedding provider, or use a smaller model."
+                ) from exc
+            raise
+
+        _emit(
+            reporter,
+            f"writing batch {batch_counter} to {store.backend_name} store",
+        )
+        store.upsert(
+            ids=[chunk.chunk_id for chunk in batch],
+            documents=[chunk.content for chunk in batch],
+            embeddings=embeddings,
+            metadatas=[_flatten_metadata(chunk) for chunk in batch],
+        )
+        start += len(batch)
+        del embeddings
 
 
 def inspect_index_changes(config: dict) -> dict:
@@ -276,36 +332,17 @@ def full_index(config: dict, reporter=None) -> IndexStats:
     _emit(reporter, "scanning source files")
     manifests = _scan_project_files(config)
     _emit(reporter, f"found {len(manifests)} files to index")
-    chunks = []
     _emit(reporter, "chunking files")
     workers = int(config.get("performance", {}).get("workers", 0)) or None
-    args_list = [
-        (
-            relative_path,
-            manifest["abs_path"],
-            config["_project_root"],
-            manifest["profile_config"],
-            manifest["metadata_defaults"],
-            manifest["profile"],
-            manifest["mtime"],
-            manifest["md5"],
-        )
-        for relative_path, manifest in manifests.items()
-    ]
-    try:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            for relative_path, file_state, file_chunks in pool.map(_chunk_one_file, args_list):
-                _emit(reporter, f"chunked {relative_path} ({len(file_chunks)} chunks)")
-                state["files"][relative_path] = file_state
-                chunks.extend(file_chunks)
-    except Exception:
-        for args in args_list:
-            relative_path, file_state, file_chunks = _chunk_one_file(args)
+    total_chunks = 0
+    args_list = _chunk_args_from_manifests(config, manifests)
+    with _persist_context(store):
+        for relative_path, file_state, file_chunks in _iter_chunk_results(args_list, workers):
             _emit(reporter, f"chunked {relative_path} ({len(file_chunks)} chunks)")
             state["files"][relative_path] = file_state
-            chunks.extend(file_chunks)
-    _emit(reporter, f"generated {len(chunks)} chunks")
-    _upsert_chunks(config, store, embedder, chunks, reporter=reporter)
+            total_chunks += len(file_chunks)
+            _upsert_chunks(config, store, embedder, file_chunks, reporter=reporter)
+    _emit(reporter, f"generated {total_chunks} chunks")
     _emit(reporter, "saving index state")
     _save_state(config, state)
     return _build_stats(config, store, state)
@@ -348,41 +385,22 @@ def incremental_index(config: dict, reporter=None) -> IndexStats:
             f"{len(manifests) - len(changed_or_new)} unchanged"
         ),
     )
-    # Chunk all changed/new files in parallel, then delete-old + upsert per file
     workers = int(config.get("performance", {}).get("workers", 0)) or None
-    chunk_args = [
-        (
-            relative_path,
-            manifest["abs_path"],
-            config["_project_root"],
-            manifest["profile_config"],
-            manifest["metadata_defaults"],
-            manifest["profile"],
-            manifest["mtime"],
-            manifest["md5"],
-        )
-        for relative_path, manifest, _ in changed_or_new
-    ]
-    chunked: dict[str, tuple] = {}
-    try:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            for relative_path, file_state, file_chunks in pool.map(_chunk_one_file, chunk_args):
-                chunked[relative_path] = (file_state, file_chunks)
-    except Exception:
-        for args in chunk_args:
-            relative_path, file_state, file_chunks = _chunk_one_file(args)
-            chunked[relative_path] = (file_state, file_chunks)
+    selected_manifests = {relative_path: manifest for relative_path, manifest, _ in changed_or_new}
+    previous_states = {relative_path: previous for relative_path, _, previous in changed_or_new}
+    chunk_args = _chunk_args_from_manifests(config, selected_manifests)
 
-    for relative_path, manifest, previous in changed_or_new:
-        file_state, file_chunks = chunked[relative_path]
-        if previous:
-            _emit(reporter, f"re-indexing changed file: {relative_path}")
-            store.delete(previous.get("chunk_ids", []))
-        else:
-            _emit(reporter, f"indexing new file: {relative_path}")
-        _emit(reporter, f"generated {len(file_chunks)} chunks for {relative_path}")
-        _upsert_chunks(config, store, embedder, file_chunks, reporter=reporter)
-        state["files"][relative_path] = file_state
+    with _persist_context(store):
+        for relative_path, file_state, file_chunks in _iter_chunk_results(chunk_args, workers):
+            previous = previous_states[relative_path]
+            if previous:
+                _emit(reporter, f"re-indexing changed file: {relative_path}")
+                store.delete(previous.get("chunk_ids", []))
+            else:
+                _emit(reporter, f"indexing new file: {relative_path}")
+            _emit(reporter, f"generated {len(file_chunks)} chunks for {relative_path}")
+            _upsert_chunks(config, store, embedder, file_chunks, reporter=reporter)
+            state["files"][relative_path] = file_state
 
     state["last_indexed"] = _utc_now()
     _emit(reporter, "saving index state")
